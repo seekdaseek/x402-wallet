@@ -55,24 +55,49 @@ console.log(await res.json(), wallet.receipts, wallet.spentUsd);
 Caps throw `CapExceeded` before any signature request fires — verified against a captured
 production 402 in `test/live-replay.test.mjs`.
 
-## Session budgets (experimental — the usability primitive)
+## Session budgets — native Solana Allowances (recommended)
 
-You cannot biometric-prompt a human for every $0.001 call. One wallet signature performs an SPL
-`Approve` delegating a **capped** amount on the user's own token account to an ephemeral session
-key; per-call payments are then signed by the session key as **delegate authority**. Funds never
-leave the user's wallet; the cap is enforced on-chain by the token program; `Revoke` ends it.
+You cannot biometric-prompt a human for every $0.001 call. The answer is a capped,
+revocable delegation the user approves **once**, after which an ephemeral session key
+pulls silently.
+
+The naive way — raw SPL `Approve` — has a fatal flaw: **one delegate per token account**.
+A second approval silently overwrites the first, so an agent budget and any subscription
+on the same USDC balance can't coexist. Solana's Foundation shipped an audited, mainnet
+program that fixes exactly this (`De1eg…avR44`, June 2026): every arrangement routes
+through a per-`(user, mint)` Subscription Authority PDA that holds the single approval,
+and real caps live in individual delegation PDAs. Unlimited concurrent budgets, one token
+account.
+
+This library wraps that program and wires it to x402 — the connective tissue the
+Foundation's own docs call out as future work:
 
 ```js
-import { createSessionBudget, sessionAdapter, createSvmSigner } from '@seekdaseek/x402-wallet';
-const { sessionKey, approveTx, revokeTx } = createSessionBudget({ owner, capUnits: 5_000_000 }); // $5
-// 1. user's wallet signs+sends approveTx (ONE prompt)
-// 2. silent per-call payments:
-const silent = await createSvmSigner(sessionAdapter(sessionKey));
+import { buildOpenBudget, buildCloseBudget, budgetSessionAdapter, createSvmSigner } from '@seekdaseek/x402-wallet';
+
+// 1. ONE wallet signature opens a capped budget ($5, expires in 24h)
+const { sessionKey, tx, budget } = buildOpenBudget({
+  user, capUnits: 5_000_000, expiryTs: Math.floor(Date.now()/1000) + 86400,
+  saExists, saInitId,               // read the SA from chain first; skip init if it exists
+});
+// user's wallet (Seed Vault / injected) signs `tx` — the only prompt
+
+// 2. per-call x402 payments sign SILENTLY with the session key — no prompt
+const silentSigner = await createSvmSigner(budgetSessionAdapter(budget));
+//    ...pass silentSigner to createX402Wallet; every 402 is pulled under the cap
+
+// 3. instant kill switch — user's wallet signs the revoke
+const revokeTx = buildCloseBudget(budget);
 ```
 
-**Open question, stated plainly:** whether live facilitators accept a delegate as the
-`TransferChecked` authority. `buildDelegateProbe()` constructs the one-cent mainnet experiment
-that answers it. Until it settles, treat budgets as experimental.
+Funds never leave the user's wallet. The cap is enforced **on-chain by an audited program**,
+not by client code — which also removes the scariest part of rolling your own: there is no
+unaudited money-moving code in the trust path. Every instruction is byte-verified against
+the program spec in `test/allowance.test.mjs`, including the property that makes it work —
+**the session key signs each pull; the user does not.**
+
+The raw-`Approve` prototype is still exported from `./budget.js` (as `budget-legacy`) so
+older imports don't break, but new code should use the Allowances path above.
 
 ## Status & tests
 
@@ -81,6 +106,7 @@ that answers it. Until it settles, treat budgets as experimental.
 | `test/thesis.test.mjs` | Mutating wallet breaks PartialSigner; ModifyingSigner survives (byte-level) | PASS |
 | `test/budget.test.mjs` | Cap encoded on-chain, delegate is authority+signer, silent signing works | PASS |
 | `test/live-replay.test.mjs` | Caps block pre-signature against the real production 402; both rails parsed | PASS |
+| `test/allowance.test.mjs` | Native-Allowances instructions byte-correct; session key signs pulls, user doesn't | PASS |
 
 Device-verified upstream: a physical Seeker's Seed Vault signed a foreign-fee-payer v0 x402
 transaction (MWA 2.2.8) — see seeker402. **Not yet done:** a settled mainnet payment through this
@@ -94,7 +120,9 @@ src/core.js         payFetch, rail selection, spend caps, receipts
 src/svm/signer.js   TransactionModifyingSigner (+ the naive PartialSigner, kept for the regression test)
 src/svm/mwa.js      Seed Vault / MWA adapter (raw protocol, kit-native)
 src/evm/signer.js   EIP-1193 + viem adapters (signTypedData)
-src/budget.js       session budgets: Approve/Revoke, silent delegate signer, delegate probe
+src/allowance.js       session budgets on Solana's native Subscriptions program (De1eg…avR44)
+src/allowance-x402.js  open/close budget + silent session signer wired to x402
+src/budget.js          DEPRECATED raw-Approve prototype (kept for back-compat)
 examples/base-pay.html  pay AgentFeed on Base from MetaMask
 ```
 
