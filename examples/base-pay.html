@@ -1,0 +1,27 @@
+<!doctype html><html><head><meta charset="utf-8"><title>x402-wallet — pay on Base from MetaMask</title>
+<style>body{font-family:ui-monospace,monospace;max-width:680px;margin:40px auto;padding:0 16px;background:#0d0f14;color:#d7dce3}
+button{padding:10px 18px;font:inherit;cursor:pointer;background:#1a5cff;color:#fff;border:0;border-radius:6px}
+pre{background:#12141a;padding:14px;border-radius:6px;overflow:auto;font-size:13px}</style></head><body>
+<h2>x402-wallet · Base demo</h2>
+<p>Connect an injected EVM wallet and pay an HTTP 402 on Base (eip155:8453). The wallet signs an
+EIP-712 authorization — no gas, no transaction from you; the facilitator settles it.</p>
+<button id="go">Connect & pay $0.001 for /api/sol-price</button>
+<pre id="log">ready.</pre>
+<script type="module">
+// In a real app: import { createX402Wallet, fromEip1193 } from '@seekdaseek/x402-wallet'
+import { createX402Wallet } from '../src/core.js';
+import { fromEip1193 } from '../src/evm/signer.js';
+const log = (m) => document.getElementById('log').textContent += '\n' + m;
+document.getElementById('go').onclick = async () => {
+  try {
+    const [addr] = await window.ethereum.request({ method: 'eth_requestAccounts' });
+    log('wallet: ' + addr);
+    const wallet = createX402Wallet({ evmSigner: fromEip1193(window.ethereum, addr), caps: { maxPerCallUsd: 0.05, maxTotalUsd: 1 } });
+    const res = await wallet.payFetch('https://x402.ochinimus.app/api/sol-price');
+    log('status: ' + res.status);
+    log('body: ' + await res.text());
+    log('settlement: ' + res.headers.get('payment-response'));
+    log('receipts: ' + JSON.stringify(wallet.receipts, null, 2));
+  } catch (e) { log('ERR ' + (e?.name ?? '') + ': ' + (e?.message ?? e)); }
+};
+</script></body></html>
