@@ -128,3 +128,17 @@ examples/base-pay.html  pay AgentFeed on Base from MetaMask
 
 MIT. Built by [seekdaseek](https://github.com/seekdaseek) — who also runs the x402 server this is
 tested against ([AgentFeed](https://x402.ochinimus.app)): both sides of the protocol, one repo apart.
+
+## Live mainnet settlements
+
+Both rails proven end-to-end against the live Coinbase CDP facilitator — real USDC on mainnet, not testnet or replay. The payer holds **zero native gas** on either chain; the facilitator sponsors it.
+
+| Rail | Signer path | Network | Amount | Transaction |
+|------|-------------|---------|--------|-------------|
+| Solana | SVM `TransactionModifyingSigner` | solana mainnet | 0.001 USDC | [`5XPKFW…WqM2`](https://solscan.io/tx/5XPKFWmL937cUHF29koc26QeQTwBmzo3KCw88NdfhhpNtx1TUgKjvo6BtkJ1BD7TBDfbfpTHmQC7U7MUFzdxWqM2) |
+| Base | EVM EIP-3009 `signTypedData` | eip155:8453 | 0.001 USDC | [`0xe49b8c…4a31`](https://basescan.org/tx/0xe49b8c75de425c52b321fa1df5c428a18e51ca11e3b982fc80b6ea2ed24c4a31) |
+
+Reproduce — put a funded payer key at `./payer.json` (Solana) or `./payer-evm.key` (Base), a few cents of USDC, no gas token needed, then run:
+
+    node settle-mainnet.mjs   # Solana
+    node settle-base.mjs      # Base
