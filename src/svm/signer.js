@@ -3,7 +3,14 @@
 // compute-unit price — measured on device). So the signer MUST be a
 // @solana/kit TransactionModifyingSigner. A TransactionPartialSigner staples the
 // wallet's signature onto the ORIGINAL message and verification fails silently.
+//
+// A wallet being ALLOWED to mutate is not the same as being allowed to mutate
+// ANYTHING. assertOnlyComputeBudgetChanged confirms the wallet touched nothing but
+// the compute-unit price/limit before we return its transaction for submission — so
+// a wallet (or a compromised adapter) cannot rewrite the amount, recipient or mint
+// under cover of the legitimate CU-price mutation.
 import { address, getBase64EncodedWireTransaction, getTransactionDecoder } from '@solana/kit';
+import { assertOnlyComputeBudgetChanged } from './verify.js';
 
 const txDecoder = getTransactionDecoder();
 
@@ -23,8 +30,14 @@ export async function createSvmSigner(adapter) {
     modifyAndSignTransactions: async (transactions) => {
       const payloads = transactions.map(getBase64EncodedWireTransaction);
       const signed = await adapter.signPayloads(payloads);
-      // Return the WALLET's transaction verbatim — its mutation and its signature together.
-      return signed.map(b64 => txDecoder.decode(Uint8Array.from(Buffer.from(b64, 'base64'))));
+      // GUARD: the wallet's transaction is carried through verbatim — its mutation and
+      // its signature together — but ONLY after confirming that mutation was limited to
+      // ComputeBudget. Any change to amount, recipient, mint or the instruction set
+      // throws WalletMutationError here, before the tx can be submitted.
+      return signed.map((b64, i) => {
+        assertOnlyComputeBudgetChanged(payloads[i], b64);
+        return txDecoder.decode(Uint8Array.from(Buffer.from(b64, 'base64')));
+      });
     },
   };
 }
